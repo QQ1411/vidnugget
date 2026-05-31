@@ -173,6 +173,21 @@ async def get_job(job_id: str):
     return job
 
 
+@app.get("/api/add")
+async def add_url(url: str, background_tasks: BackgroundTasks):
+    """Called by the iOS Shortcut: GET /api/add?url=https://youtube.com/..."""
+    video_id = extract_video_id(url)
+    if not video_id:
+        return {"ok": False, "error": "Not a valid YouTube URL"}
+
+    # Append to links.txt
+    line = f"\n{url}"
+    with open(LINKS_FILE, "a", encoding="utf-8") as f:
+        f.write(line)
+
+    return {"ok": True, "message": f"Added to queue: {url}"}
+
+
 @app.get("/api/nuggets")
 async def get_nuggets(category: str = "", search: str = ""):
     all_nuggets = load_all_nuggets()
