@@ -15,7 +15,7 @@ import uvicorn
 
 from processor import (
     process_video, load_all_nuggets, UPLOADS_DIR, KNOWLEDGE_BASE,
-    INBOX_DIR, extract_video_id
+    INBOX_DIR, OBSIDIAN_QUEUE, extract_video_id
 )
 
 # In-memory job tracker
@@ -24,8 +24,8 @@ jobs: dict[str, dict] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Start folder watcher for drop-in URL files
     asyncio.create_task(watch_inbox())
+    asyncio.create_task(watch_obsidian_queue())
     yield
 
 app = FastAPI(title="VidNugget", lifespan=lifespan)
@@ -119,6 +119,77 @@ async def watch_inbox():
                     lines = read_links_file()
                     lines = mark_line(lines, url, FAIL_PREFIX, f"  # {e}")
                     write_links_file(lines)
+
+        except Exception:
+            pass
+
+        await asyncio.sleep(5)
+
+
+async def watch_obsidian_queue():
+    """
+    Watch the Obsidian 'VidNugget Queue.md' note for new YouTube URLs.
+    User shares from YouTube → Obsidian (iOS share sheet) → appends URL to this note.
+    Works anywhere — syncs via iCloud, Mac processes when it sees the change.
+    """
+    while True:
+        try:
+            if not OBSIDIAN_QUEUE.exists():
+                await asyncio.sleep(10)
+                continue
+
+            lines = OBSIDIAN_QUEUE.read_text(encoding="utf-8").splitlines()
+            changed = False
+
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                if (not stripped
+                        or stripped.startswith("#")
+                        or stripped.startswith("|")
+                        or stripped.startswith("✅")
+                        or stripped.startswith("⏳")
+                        or stripped.startswith("❌")
+                        or stripped == "---"):
+                    continue
+                if "youtube.com" not in stripped and "youtu.be" not in stripped:
+                    continue
+
+                url = stripped
+                video_id = extract_video_id(url)
+                if not video_id:
+                    lines[i] = f"❌ {url}  <!-- could not parse video ID -->"
+                    changed = True
+                    continue
+
+                # Mark in-progress right away
+                lines[i] = f"⏳ {url}"
+                OBSIDIAN_QUEUE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                changed = False  # just wrote it
+
+                screenshots = [
+                    p for p in INBOX_DIR.iterdir()
+                    if p.is_file() and p.suffix.lower() in IMAGE_EXTS
+                ]
+
+                job_id = f"obsidian_{video_id}"
+                jobs[job_id] = {"status": "processing", "url": url, "source": "obsidian"}
+                try:
+                    result = await process_video(url, screenshots)
+                    jobs[job_id].update({"status": "done", **result})
+                    title = result.get("title", "")
+                    lines = OBSIDIAN_QUEUE.read_text(encoding="utf-8").splitlines()
+                    lines = mark_line(lines, url, "✅ ", f"  <!-- {title} -->")
+                    for img in screenshots:
+                        img.unlink(missing_ok=True)
+                except Exception as e:
+                    jobs[job_id].update({"status": "error", "error": str(e)})
+                    lines = OBSIDIAN_QUEUE.read_text(encoding="utf-8").splitlines()
+                    lines = mark_line(lines, url, "❌ ", f"  <!-- {e} -->")
+
+                OBSIDIAN_QUEUE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            if changed:
+                OBSIDIAN_QUEUE.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
         except Exception:
             pass
