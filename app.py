@@ -50,12 +50,19 @@ async def watch_inbox():
     """
     processed: set[Path] = set()
     while True:
-        for txt_file in INBOX_DIR.glob("*.txt"):
+        for txt_file in [*INBOX_DIR.glob("*.txt"), *INBOX_DIR.glob("*.rtf")]:
             if txt_file in processed or txt_file.parent.name == "done":
                 continue
             processed.add(txt_file)
             try:
-                content = txt_file.read_text(encoding="utf-8").strip()
+                raw = txt_file.read_bytes()
+                # Strip RTF markup if needed, otherwise decode as plain text
+                if raw[:5] == b"{\\rtf":
+                    import re as _re
+                    content = _re.sub(r'\{[^}]*\}|\\[a-z]+\d* ?|[{}]', ' ', raw.decode("latin-1"))
+                else:
+                    content = raw.decode("utf-8", errors="ignore")
+                content = content.strip()
                 url = next(
                     (l.strip() for l in content.splitlines()
                      if "youtube.com" in l or "youtu.be" in l),
