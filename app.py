@@ -32,66 +32,96 @@ app = FastAPI(title="VidNugget", lifespan=lifespan)
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+LINKS_FILE = INBOX_DIR / "links.txt"
+DONE_PREFIX = "✅ "
+FAIL_PREFIX = "❌ "
+
+
+def read_links_file() -> list[str]:
+    if not LINKS_FILE.exists():
+        return []
+    return LINKS_FILE.read_text(encoding="utf-8").splitlines()
+
+
+def write_links_file(lines: list[str]) -> None:
+    LINKS_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def mark_line(lines: list[str], url: str, prefix: str, suffix: str = "") -> list[str]:
+    """Replace the first line containing url with a marked version."""
+    for i, line in enumerate(lines):
+        if url in line:
+            lines[i] = f"{prefix}{url}{suffix}"
+            return lines
+    return lines
 
 
 async def watch_inbox():
     """
-    Watch iCloud inbox/ for .txt files containing a YouTube URL.
+    Watch iCloud inbox/ for new YouTube URLs in links.txt.
 
-    Workflow the user follows on iPhone:
-      1. Create a plain .txt file with a YouTube URL (one line is enough).
-         Name it anything, e.g. 'my_video.txt'.
-      2. Optionally drop screenshot images (.jpg/.png) into inbox/ alongside it.
-      3. Save/AirDrop everything into iCloud Drive → VidNugget → inbox/
-      4. VidNugget picks them up within 5 seconds, processes, and saves the
-         nugget to iCloud Drive → VidNugget → knowledge_base/
+    The user keeps one persistent file — iCloud Drive → VidNugget → inbox → links.txt —
+    and pastes URLs into it one per line. VidNugget checks every 5 seconds, processes
+    any unmarked lines, and updates each line in-place:
 
-    After processing, the .txt is moved to inbox/done/ and images are deleted.
+        https://youtube.com/watch?v=abc        ← pending
+        ✅ https://youtube.com/watch?v=abc     ← done
+        ❌ https://youtube.com/watch?v=xyz     ← failed
+
+    Any images (.jpg/.png) in inbox/ at the time a URL is processed are used
+    as screenshots for that video, then deleted from inbox/.
     """
-    processed: set[Path] = set()
     while True:
-        for txt_file in [*INBOX_DIR.glob("*.txt"), *INBOX_DIR.glob("*.rtf")]:
-            if txt_file in processed or txt_file.parent.name == "done":
-                continue
-            processed.add(txt_file)
-            try:
-                raw = txt_file.read_bytes()
-                # Strip RTF markup if needed, otherwise decode as plain text
-                if raw[:5] == b"{\\rtf":
-                    import re as _re
-                    content = _re.sub(r'\{[^}]*\}|\\[a-z]+\d* ?|[{}]', ' ', raw.decode("latin-1"))
-                else:
-                    content = raw.decode("utf-8", errors="ignore")
-                content = content.strip()
-                url = next(
-                    (l.strip() for l in content.splitlines()
-                     if "youtube.com" in l or "youtu.be" in l),
-                    None,
-                )
-                if not url:
+        try:
+            lines = read_links_file()
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                # Skip blank lines, comments, already-processed lines, and the header block
+                if (not stripped
+                        or stripped.startswith("#")
+                        or stripped.startswith(DONE_PREFIX)
+                        or stripped.startswith(FAIL_PREFIX)):
+                    continue
+                if "youtube.com" not in stripped and "youtu.be" not in stripped:
                     continue
 
-                # Grab all images currently sitting in inbox/ (user's screenshots)
+                url = stripped
+                video_id = extract_video_id(url)
+                if not video_id:
+                    lines[i] = f"{FAIL_PREFIX}{url}  # could not parse video ID"
+                    write_links_file(lines)
+                    continue
+
+                # Mark as in-progress immediately so a restart doesn't double-process
+                lines[i] = f"⏳ {url}"
+                write_links_file(lines)
+                lines = read_links_file()  # re-read so mark_line has fresh state
+
+                # Grab images sitting in inbox/ right now
                 screenshots = [
                     p for p in INBOX_DIR.iterdir()
                     if p.is_file() and p.suffix.lower() in IMAGE_EXTS
                 ]
 
-                job_id = f"inbox_{txt_file.stem}_{extract_video_id(url) or 'unknown'}"
+                job_id = f"inbox_{video_id}"
                 jobs[job_id] = {"status": "processing", "url": url, "source": "icloud_inbox"}
                 try:
                     result = await process_video(url, screenshots)
                     jobs[job_id].update({"status": "done", **result})
+                    title = result.get("title", "")
+                    lines = read_links_file()  # re-read in case user edited while processing
+                    lines = mark_line(lines, url, DONE_PREFIX, f"  # {title}")
+                    write_links_file(lines)
+                    for img in screenshots:
+                        img.unlink(missing_ok=True)
                 except Exception as e:
                     jobs[job_id].update({"status": "error", "error": str(e)})
+                    lines = read_links_file()
+                    lines = mark_line(lines, url, FAIL_PREFIX, f"  # {e}")
+                    write_links_file(lines)
 
-                # Move .txt to done/, remove processed images
-                txt_file.rename(INBOX_DIR / "done" / txt_file.name)
-                for img in screenshots:
-                    img.unlink(missing_ok=True)
-
-            except Exception:
-                pass
+        except Exception:
+            pass
 
         await asyncio.sleep(5)
 
