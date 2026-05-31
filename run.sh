@@ -23,15 +23,15 @@ pip install -q -r requirements.txt
 echo ""
 echo "🧠 Starting VidNugget..."
 LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || hostname -I 2>/dev/null | awk '{print $1}' || echo "localhost")
-ICLOUD="$HOME/Library/Mobile Documents/com~apple~CloudDocs/VidNugget"
+OB="$HOME/Library/Mobile Documents/iCloud~md~obsidian/Documents/VidNugget"
 echo "   Local:          http://localhost:8000"
 echo "   Mobile (Wi-Fi): http://${LOCAL_IP}:8000"
 echo ""
-echo "☁️  iCloud inbox:   $ICLOUD/inbox/"
-echo "   Drop a .txt with a YouTube URL + optional screenshots there."
+echo "📥 Queue note:    $OB/Queue.md"
+echo "   Share YouTube → Obsidian → Queue.md from anywhere"
 echo ""
-echo "📚 Nuggets saved to: $ICLOUD/knowledge_base/"
-echo "   Browse in Files app: iCloud Drive → VidNugget → knowledge_base"
+echo "📚 Nuggets:       $OB/knowledge_base/"
+echo "   Browse in Obsidian on any device"
 echo ""
 
 python app.py

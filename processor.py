@@ -19,20 +19,17 @@ def slugify(text: str, max_length: int = 60, separator: str = "_") -> str:
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
-# iCloud Drive paths
-_ICLOUD = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs"
-ICLOUD_ROOT = _ICLOUD / "VidNugget"
-INBOX_DIR = ICLOUD_ROOT / "inbox"
-KNOWLEDGE_BASE = ICLOUD_ROOT / "knowledge_base"
+# All VidNugget data lives inside the Obsidian vault so it syncs to every device
+OBSIDIAN_VAULT = Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents"
+VIDNUGGET_ROOT = OBSIDIAN_VAULT / "VidNugget"
+INBOX_DIR = VIDNUGGET_ROOT / "inbox"
+KNOWLEDGE_BASE = VIDNUGGET_ROOT / "knowledge_base"
+OBSIDIAN_QUEUE = VIDNUGGET_ROOT / "Queue.md"
 
 for _d in (INBOX_DIR, KNOWLEDGE_BASE, INBOX_DIR / "done"):
     _d.mkdir(parents=True, exist_ok=True)
 
-# Obsidian vault queue note — user shares YouTube URLs here from iOS
-OBSIDIAN_VAULT = Path.home() / "Library/Mobile Documents/iCloud~md~obsidian/Documents"
-OBSIDIAN_QUEUE = OBSIDIAN_VAULT / "VidNugget Queue.md"
-
-# Keep a local uploads dir as fallback for the web UI
+# Local uploads dir for web UI screenshot uploads
 UPLOADS_DIR = Path("uploads")
 UPLOADS_DIR.mkdir(exist_ok=True)
 
