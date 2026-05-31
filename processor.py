@@ -10,7 +10,12 @@ from datetime import datetime
 
 import anthropic
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
-from python_slugify import slugify
+
+
+def slugify(text: str, max_length: int = 60, separator: str = "_") -> str:
+    text = re.sub(r"[^\w\s-]", "", text.lower())
+    text = re.sub(r"[\s-]+", separator, text).strip(separator)
+    return text[:max_length]
 
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
 
@@ -40,22 +45,23 @@ def extract_video_id(url: str) -> str | None:
 
 
 def get_youtube_transcript(video_id: str) -> tuple[str, str]:
-    """Returns (transcript_text, method_used)."""
+    """Returns (transcript_text, method_used). Supports youtube-transcript-api v1.x."""
+    api = YouTubeTranscriptApi()
     try:
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id)
-        text = " ".join(entry["text"] for entry in transcript_list)
+        fetched = api.fetch(video_id)
+        text = " ".join(s.text for s in fetched.snippets)
         return text, "youtube_captions"
     except (NoTranscriptFound, TranscriptsDisabled):
         pass
 
     # Try any available language
     try:
-        transcripts = YouTubeTranscriptApi.list_transcripts(video_id)
-        for t in transcripts:
+        transcript_list = api.list(video_id)
+        for t in transcript_list:
             try:
-                entries = t.fetch()
-                text = " ".join(e["text"] for e in entries)
-                return text, f"youtube_captions_{t.language_code}"
+                fetched = t.fetch()
+                text = " ".join(s.text for s in fetched.snippets)
+                return text, f"youtube_captions_{t.language}"
             except Exception:
                 continue
     except Exception:
